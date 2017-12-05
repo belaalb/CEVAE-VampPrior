@@ -165,7 +165,9 @@ class TrainLoop(object):
 		
 		
 		'''
-		TO DO:	
+		TO DO:
+		1.
+		2.	
 		'''
 		
 
