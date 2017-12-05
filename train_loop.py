@@ -15,7 +15,7 @@ import evaluation
 INFINITY = float('inf')
 
 class TrainLoop(object):
-	def __init__(self, encoder, decoder, optimizer, dataset, z_dim, checkpoint_path=None, checkpoint_epoch=None, cuda=True):
+	def __init__(self, encoder, decoder, optimizer, dataset, z_dim, n_pseudo_inputs, checkpoint_path = None, checkpoint_epoch = None, cuda = True):
 
 		if checkpoint_path is None:
 			# Save to current directory
@@ -33,6 +33,7 @@ class TrainLoop(object):
 		self.dataset = dataset
 		self.history = {'train_loss': [], 'valid_loss': []}
 		self.z_dim = z_dim
+		self.n_pseudo_inputs = n_pseudo_inputs
 
 		if checkpoint_epoch is not None:
 
@@ -83,26 +84,29 @@ class TrainLoop(object):
 				np.random.shuffle(idx)
 				for j in range(n_iter_per_epoch):
 					batch = torch.LongTensor(np.random.choice(idx, 100))
-					x_train, y_train, t_train = xtr.index_select(0, batch), ytr.index_select(0,batch), ttr.index_select(0,batch)
+					x_train, y_train, t_train = xtr.index_select(0, batch), ytr.index_select(0, batch), ttr.index_select(0, batch)
 					batch_train_data = Variable(torch.cat([x_train, t_train, y_train], 1).float())
 					info_dict = self.svi.step(batch_train_data)
 					avg_loss += info_dict
+				
 				avg_loss = avg_loss / n_iter_per_epoch
-				avg_loss = avg_loss / 100
-				print("average train loss in epoch {}/{}: {} ".format(epoch+1, n_epochs, avg_loss))
+				avg_loss = avg_loss / 100				
+				print("average train loss in epoch {}/{}: {} ".format(epoch + 1, n_epochs, avg_loss))
+				
 				train_loss = self.svi.evaluate_loss(train_data)
 				self.history['train_loss'].append(train_loss)
-				print("train loss in epoch {}/{}: {} ".format(epoch+1, n_epochs, train_loss))
+				print("train loss in epoch {}/{}: {} ".format(epoch + 1, n_epochs, train_loss))
 
-				x1, x2, t, y , z = self.model(batch_train_data,seperated=True)
+				x1, x2, t, y , z = self.model(batch_train_data,separated = True)
 				print("YY : {}, {}, {}, {}".format(x1.size(), x2.size(), t.size(), y.size()))
+				
 				# val_loss = evaluation.val_loss(x1, x2, t,z, y,x_val, t_val, y_val)
 				val_loss = self.svi.evaluate_loss(val_data)
 				# to be completed YY :
 				
 				# print "temporary : " , val_loss
 				self.history['valid_loss'].append(val_loss)
-				print("validation loss in epoch {}/{}: {}".format(epoch+1, n_epochs, val_loss))
+				print("validation loss in epoch {}/{}: {}".format(epoch + 1, n_epochs, val_loss))
 				if val_loss <= best_val_loss:
 					print('Improved validation bound, old: {:0.3f}, new: {:0.3f}'.format(best_val_loss, val_loss))
 					best_val_loss = val_loss
@@ -110,7 +114,8 @@ class TrainLoop(object):
 					self.checkpointing()
 
 	def test(self):
-		y0, y1 = get_y0_y1(y_post, f0, f1, shape=yalltr.shape, L=100)
+
+		y0, y1 = get_y0_y1(y_post, f0, f1, shape = yalltr.shape, L = 100)
 		y0, y1 = y0 * ys + ym, y1 * ys + ym
 		score = self.train_calc_stats(y1, y0)
 		print("Final train score: {}".format(score))
@@ -122,19 +127,50 @@ class TrainLoop(object):
 
 		print('Replication: {}/{}, tr_ite: {:0.3f}, tr_ate: {:0.3f}, tr_pehe: {:0.3f} \ te_ite: {:0.3f}, te_ate: {:0.3f}, te_pehe: {:0.3f}'.format(i + 1, reps, score[0], score[1], score[2], score_test[0], score_test[1], score_test[2]))
 
-	def model(self, data, seperated = False):
+	def model(self, data, prior = 'vamp', separated = False):
+
 		decoder = pyro.module('decoder', self.decoder)
 
-		z_mu, z_sigma = ng_zeros([data.size(0), self.z_dim]), ng_ones([data.size(0), self.z_dim])
+		# Normal prior
+	    if prior == 'standard':
+			z_mu, z_sigma = ng_zeros([data.size(0), self.z_dim]), ng_ones([data.size(0), self.z_dim])
 
-		z = pyro.sample("latent", dist.normal, z_mu, z_sigma)
+			z = pyro.sample("latent", dist.normal, z_mu, z_sigma)
 
-		x1, x2, t, y = decoder.forward(z)
+	    elif self.args.prior == 'vamp':
+			z_mu_minibatch, z_sigma_minibatch = self.vampprior()
+			z = pyro.sample("latent", dist.normal, z_mu, z_sigma)
+
+			z = z.expand(100, -1)
+			
+		x1, x2, t, y = decoder.forward(z) 
 
 		# pyro.sample('obs', torch.cat([x1, x2, t, y], 1))
-		if seperated :
+		if separated :
 			return x1, x2, t, y , z
 		return torch.cat([x1, x2, t, y], 1)
+
+	def vampprior(self):
+		 	
+        pseudo_inputs = self.get_pseudo_inputs()
+
+        # calculate params for given data (find mu and var for latent representation of all pseudo inputs)  
+		muq_t0, sigmaq_t0, muq_t1, sigmaq_t1, qt = self.encoder.forward(pseudo_inputs)
+		z_mu = qt * muq_t1 + (1. - qt) * muq_t0
+		z_sigma = qt * sigmaq_t1 + (1. - qt) * sigmaq_t0
+		 
+		return z_mu, z_sigma 
+
+	def get_pseudo_inputs(self):
+		
+		
+		'''
+		TO DO:
+		1.
+		2.
+		3.	
+		'''
+		
 
 	def guide(self, data):
 		encoder = pyro.module('encoder', self.encoder)

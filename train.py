@@ -9,7 +9,7 @@ from pyro.optim import Adam
 from datasets import IHDP
 
 # Training settings
-parser = argparse.ArgumentParser(description='Online transfer learning for emotion recognition tasks')
+parser = argparse.ArgumentParser(description='Causal Estimation VAE with VampPrior')
 parser.add_argument('--batch-size', type=int, default=64, metavar='N', help='input batch size for training (default: 64)')
 parser.add_argument('--reps', type=int, default=1, metavar='N', help='number of replications (default: 1)')
 parser.add_argument('--epochs', type=int, default=10, metavar='N', help='number of epochs (default: 10)')
@@ -24,6 +24,7 @@ parser.add_argument('--d', type=int, default=20, metavar='S', help='latent dimen
 parser.add_argument('--nh', type=int, default=3, metavar='S', help='number of hidden layers (default: 3)')
 parser.add_argument('--h', type=int, default=200, metavar='S', help='number and size of hidden layers (default: 200)')
 parser.add_argument('--no-cuda', action='store_true', default=True, help='Disables GPU use')
+parser.add_argument('--n-pseudo-inputs', type=int, default = 100, metavar='S', help='Number of pseudo-inputs')
 args = parser.parse_args()
 args.cuda = True if not args.no_cuda and torch.cuda.is_available() else False
 
@@ -42,10 +43,10 @@ if args.cuda:
 	encoder = encoder.cuda()
 	decoder = decoder.cuda()
 
-optimim_params = {'lr':args.lr, 'weight_decay':args.l2}
+optimim_params = {'lr': args.lr, 'weight_decay': args.l2}
 optimizer = Adam(optimim_params)
 
-trainer = TrainLoop(encoder, decoder, optimizer, dataset, args.d, checkpoint_path=args.checkpoint_path, checkpoint_epoch=args.checkpoint_epoch, cuda=args.cuda)
+trainer = TrainLoop(encoder, decoder, optimizer, dataset, args.d, args.n_pseudo_inputs, checkpoint_path=args.checkpoint_path, checkpoint_epoch=args.checkpoint_epoch, cuda=args.cuda)
 
 print('Cuda Mode is: {}'.format(args.cuda))
 
