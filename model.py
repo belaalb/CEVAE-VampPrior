@@ -148,8 +148,8 @@ class encoder(nn.Module):
 		Specific forward pass to generate pseudo inputs given idle_input
 		'''
 
-		pseudo_input_cont = F.relu(self.h_idle_input_cont(x))
-		pseudo_input_bin = F.hardtanh(-0.0001, 0.0001, self.h_idle_input_bin(x))
+		pseudo_input_cont = F.relu(self.h_idle_input_cont(x_idle))
+		pseudo_input_bin = F.hardtanh(-0.0001, 0.0001, self.h_idle_input_bin(x_idle))
 		pseudo_input = torch.cat([pseudo_input_cont, pseudo_input_bin], 1)
 
 		return pseudo_input

@@ -16,7 +16,7 @@ import model as model_
 INFINITY = float('inf')
 
 class TrainLoop(object):
-	def __init__(self, in_size, d, nh, h, activation, optimizer, dataset, z_dim, n_pseudo_inputs, checkpoint_path=None, checkpoint_epoch=None, cuda=True):
+	def __init__(self, in_size, d, nh, h, n_pseudo_inputs, activation, optimizer, dataset, z_dim, checkpoint_path=None, checkpoint_epoch=None, cuda=True):
 
 		if checkpoint_path is None:
 			# Save to current directory
@@ -52,7 +52,7 @@ class TrainLoop(object):
 		for t, (train, valid, test, contfeats, binfeats) in train_iter:
 			self.svi = SVI(self.model, self.guide, self.optimizer, loss="ELBO")
 
-			self.encoder = model_.encoder(self.in_size, self.in_size + 1, self.d, self.nh, self.h, len(self.dataset.binfeats), len(self.dataset.contfeats), self.activation)
+			self.encoder = model_.encoder(self.in_size, self.in_size + 1, self.d, self.nh, self.h, self.n_pseudo_inputs, len(self.dataset.binfeats), len(self.dataset.contfeats), self.activation)
 			self.decoder = model_.decoder(self.d, self.nh, self.h, len(self.dataset.binfeats), len(self.dataset.contfeats), self.activation)
 
 			if self.cuda_mode:
@@ -143,12 +143,12 @@ class TrainLoop(object):
 		decoder = pyro.module('decoder', self.decoder)
 
 		# Normal prior
-	    if prior == 'standard':
+		if prior == 'standard':
 			z_mu, z_sigma = ng_zeros([data.size(0), self.z_dim]), ng_ones([data.size(0), self.z_dim])
 
 			z = pyro.sample("latent", dist.normal, z_mu, z_sigma)
 
-	    elif self.args.prior == 'vamp':
+		elif prior == 'vamp':
 			z_mu_minibatch, z_sigma_minibatch = self.vampprior()
 			z = pyro.sample("latent", dist.normal, z_mu, z_sigma)
 
@@ -166,7 +166,7 @@ class TrainLoop(object):
 		idle_input = Variable(torch.eye(self.n_pseudo_inputs, self.n_pseudo_inputs), requires_grad = False)
  	
 		# Generate pseudo-inputs from embeddings
-        pseudo_inputs = self.encoder.forward_pseudo_inputs(idle_input)
+		pseudo_inputs = self.encoder.forward_pseudo_inputs(idle_input)
 
         # Calculate mu and var for latent representation of all pseudo inputs  
 		muq_t0, sigmaq_t0, muq_t1, sigmaq_t1, qt = self.encoder.forward(pseudo_inputs)
