@@ -149,7 +149,7 @@ class encoder(nn.Module):
 		'''
 
 		pseudo_input_cont = F.relu(self.h_idle_input_cont(x_idle))
-		pseudo_input_bin = F.hardtanh(-0.0001, 0.0001, self.h_idle_input_bin(x_idle))
+		pseudo_input_bin = F.hardtanh(self.h_idle_input_bin(x_idle), -0.001, 0.001)
 		pseudo_input = torch.cat([pseudo_input_cont, pseudo_input_bin], 1)
 
 		return pseudo_input

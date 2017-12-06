@@ -149,10 +149,18 @@ class TrainLoop(object):
 			z = pyro.sample("latent", dist.normal, z_mu, z_sigma)
 
 		elif prior == 'vamp':
-			z_mu_minibatch, z_sigma_minibatch = self.vampprior()
-			z = pyro.sample("latent", dist.normal, z_mu, z_sigma)
+			z_mu, z_sigma = self.vampprior()
+		
+			z_mu_avg = torch.mean(z_mu, 0)
 
-			z = z.expand(100, -1)		#minibatch size = 100
+			z_sigma_square = z_sigma * z_sigma
+			z_sigma_square_avg = torch.mean(z_sigma_square, 0)
+			z_sigma_avg = torch.sqrt(z_sigma_square_avg)
+
+			z_mu_avg = z_mu_avg.expand(data.size(0), z_mu_avg.size(0))
+			z_sigma_avg = z_sigma_avg.expand(data.size(0), z_sigma_avg.size(0))
+
+			z = pyro.sample("latent", dist.normal, z_mu_avg, z_sigma_avg)
 
 		x1, x2, t, y = decoder.forward(z)
 
