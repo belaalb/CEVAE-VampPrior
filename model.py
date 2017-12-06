@@ -122,6 +122,7 @@ class encoder(nn.Module):
 
 		# q(t|x)
 		logits_t = self.logits_t.forward(x)
+
 		qt = dist.bernoulli(logits_t)
 
 		# q(y|x,t)
@@ -152,8 +153,3 @@ class encoder(nn.Module):
 		pseudo_input = torch.cat([pseudo_input_cont, pseudo_input_bin], 1)
 
 		return pseudo_input
-
-
-
-
-		
