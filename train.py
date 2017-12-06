@@ -36,7 +36,7 @@ dataset = IHDP(replications=args.reps)
 
 in_size = len(dataset.binfeats) + len(dataset.contfeats)
 
-encoder = model_.encoder(in_size, in_size + 1, args.d, args.nh, args.h, len(dataset.binfeats), len(dataset.contfeats), activation=torch.nn.functional.relu)
+encoder = model_.encoder(in_size, in_size + 1, args.d, args.nh, args.h, args.n_pseudo_inputs, len(dataset.binfeats), len(dataset.contfeats), activation=torch.nn.functional.relu)
 decoder = model_.decoder(args.d, args.nh, args.h, len(dataset.binfeats), len(dataset.contfeats), activation=torch.nn.functional.relu)
 
 if args.cuda:

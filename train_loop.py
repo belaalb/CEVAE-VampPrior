@@ -151,24 +151,18 @@ class TrainLoop(object):
 		return torch.cat([x1, x2, t, y], 1)
 
 	def vampprior(self):
-		 	
-        pseudo_inputs = self.get_pseudo_inputs()
+		# Minibatch of size n_pseudo_inputs of "one hot-encoded" embeddings for each pseudo-input
+		idle_input = Variable(torch.eye(self.n_pseudo_inputs, self.n_pseudo_inputs), requires_grad = False)
+ 	
+		# Generate pseudo-inputs from embeddings
+        pseudo_inputs = self.encoder.forward_pseudo_inputs(idle_input)
 
-        # calculate params for given data (find mu and var for latent representation of all pseudo inputs)  
+        # Calculate mu and var for latent representation of all pseudo inputs  
 		muq_t0, sigmaq_t0, muq_t1, sigmaq_t1, qt = self.encoder.forward(pseudo_inputs)
 		z_mu = qt * muq_t1 + (1. - qt) * muq_t0
 		z_sigma = qt * sigmaq_t1 + (1. - qt) * sigmaq_t0
 		 
 		return z_mu, z_sigma 
-
-	def get_pseudo_inputs(self):
-		
-		
-		'''
-		TO DO:
-		1.
-		2.	
-		'''
 		
 
 	def guide(self, data):

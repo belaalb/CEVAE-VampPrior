@@ -96,7 +96,7 @@ class decoder(nn.Module):
 		return x1, x2, t, y
 
 class encoder(nn.Module):
-	def __init__(self, in_size, in2_size, d, nh, h, binfeats, contfeats, activation):
+	def __init__(self, in_size, in2_size, d, nh, h, n_pseudo_inputs, binfeats, contfeats, activation):
 		super(encoder, self).__init__()
 
 		# q(t|x)
@@ -112,13 +112,16 @@ class encoder(nn.Module):
 		self.muq_t0_sigmaq_t0 = fc_net(h, [h], [[d, None], [d, F.softplus]], activation=activation)
 		self.muq_t1_sigmaq_t1 = fc_net(h, [h], [[d, None], [d, F.softplus]], activation=activation)
 
+		# pseudo-inputs generation
+		self.h_idle_input_cont = nn.Linear(n_pseudo_inputs, contfeats)
+		self.h_idle_input_bin = nn.Linear(n_pseudo_inputs, binfeats)
+
 	def forward(self, x):
 
 		# print(x.size())
 
 		# q(t|x)
 		logits_t = self.logits_t.forward(x)
-
 		qt = dist.bernoulli(logits_t)
 
 		# q(y|x,t)
@@ -138,3 +141,19 @@ class encoder(nn.Module):
 		muq_t1, sigmaq_t1 = self.muq_t1_sigmaq_t1.forward(hqz)
 
 		return muq_t0, sigmaq_t0, muq_t1, sigmaq_t1, qt
+
+	def forward_pseudo_inputs(self, x_idle):
+		'''
+		Specific forward pass to generate pseudo inputs given idle_input
+		'''
+
+		pseudo_input_cont = F.relu(self.h_idle_input_cont(x))
+		pseudo_input_bin = F.hardtanh(-0.0001, 0.0001, self.h_idle_input_bin(x))
+		pseudo_input = torch.cat([pseudo_input_cont, pseudo_input_bin], 1)
+
+		return pseudo_input
+
+
+
+
+		
