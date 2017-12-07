@@ -15,7 +15,7 @@ from evaluation import Evaluator
 import model as model_
 
 class TrainLoop(object):
-	def __init__(self, in_size, d, nh, h, n_pseudo_inputs, activation, optimizer, dataset, z_dim, checkpoint_path=None, cuda=True):
+	def __init__(self, in_size, d, nh, h, n_pseudo_inputs, prior, activation, optimizer, dataset, z_dim, checkpoint_path=None, cuda=True):
 
 		if checkpoint_path is None:
 			# Save to current directory
@@ -37,6 +37,7 @@ class TrainLoop(object):
 		self.history = {'train_loss': [], 'valid_loss': []}
 		self.z_dim = z_dim
 		self.n_pseudo_inputs = n_pseudo_inputs
+		self.prior = prior
 
 	def train(self, n_epochs=10, n_reps=1, batch_size=100, save_every=1):
 
@@ -112,13 +113,13 @@ class TrainLoop(object):
 
 					info_dict = self.svi.step(minibatch_train_data)
 					avg_loss += info_dict
-				avg_loss = avg_loss / (n_iter_per_epoch)
+				avg_loss = avg_loss / (batch_size)
 
 				## evaluation - each save_every epochs
 
 				if epoch%save_every == 0:
-					train_loss = self.svi.evaluate_loss(train_data)
-					val_loss = self.svi.evaluate_loss(val_data)
+					train_loss = self.svi.evaluate_loss(train_data/train_data.size(0))
+					val_loss = self.svi.evaluate_loss(val_data/val_data.size(0))
 
 					self.history['train_loss'].append(train_loss)
 					self.history['valid_loss'].append(val_loss)
@@ -168,13 +169,13 @@ class TrainLoop(object):
 			score_test = self.evaluator_test.calc_stats(y1t, y0t)
 			scores_test[t,:] = score_test
 
-			scores_mu = np.mean(scores, axis=0)
-			scores_std = np.std(scores, axis=0)
+		scores_mu = np.mean(scores, axis=0)
+		scores_std = np.std(scores, axis=0)
 
-			scores_mu_test = np.mean(scores_test, axis=0)
-			scores_std_test = np.std(scores_test, axis=0)
+		scores_mu_test = np.mean(scores_test, axis=0)
+		scores_std_test = np.std(scores_test, axis=0)
 
-			print('\nTrain and test metrics ==> tr_ite: {:0.3f}+-{:0.3f}, tr_ate: {:0.3f}+-{:0.3f}, tr_pehe: {:0.3f}+-{:0.3f}, te_ite: {:0.3f}+-{:0.3f}, te_ate: {:0.3f}+-{:0.3f}, te_pehe: {:0.3f}+-{:0.3f}'.format(scores_mu[0], scores_std[0], scores_mu[1], scores_std[1], scores_mu[2], scores_std[2], scores_mu_test[0], scores_std_test[0], scores_mu_test[1], scores_std_test[1], scores_mu_test[2], scores_std_test[2]))
+		print('\nTrain and test metrics ==> tr_ite: {:0.3f}+-{:0.3f}, tr_ate: {:0.3f}+-{:0.3f}, tr_pehe: {:0.3f}+-{:0.3f}, te_ite: {:0.3f}+-{:0.3f}, te_ate: {:0.3f}+-{:0.3f}, te_pehe: {:0.3f}+-{:0.3f}'.format(scores_mu[0], scores_std[0], scores_mu[1], scores_std[1], scores_mu[2], scores_std[2], scores_mu_test[0], scores_std_test[0], scores_mu_test[1], scores_std_test[1], scores_mu_test[2], scores_std_test[2]))
 
 	def test(self):
 
@@ -231,16 +232,16 @@ class TrainLoop(object):
 
 		return y0.data, y1.data
 
-	def model(self, data, prior = 'vamp', seperated = False):
+	def model(self, data, seperated = False):
 		decoder = pyro.module('decoder', self.decoder)
 
 		# Normal prior
-		if prior == 'standard':
+		if self.prior == 0:
 			z_mu, z_sigma = ng_zeros([data.size(0), self.z_dim]), ng_ones([data.size(0), self.z_dim])
 
 			z = pyro.sample("latent", dist.normal, z_mu, z_sigma)
 
-		elif prior == 'vamp':
+		elif self.prior == 1:
 			z_mu, z_sigma = self.vampprior()
 		
 			z_mu_avg = torch.mean(z_mu, 0)
@@ -270,9 +271,6 @@ class TrainLoop(object):
  	
 		# Generate pseudo-inputs from embeddings
 		pseudo_inputs = self.encoder.forward_pseudo_inputs(idle_input)
-
-		print(pseudo_inputs[3, :])
-		print(pseudo_inputs[6, :])
 
         # Calculate mu and var for latent representation of all pseudo inputs  
 		muq_t0, sigmaq_t0, muq_t1, sigmaq_t1, qt = self.encoder.forward(pseudo_inputs)
