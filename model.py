@@ -14,16 +14,16 @@ class fc_net(nn.Module):
 
 		if layers:
 			self.input = nn.Linear(in_size, layers[0])
-			self.hidden_layers = []
+			self.hidden_layers = nn.ModuleList()
 			for i in range(1, len(layers)):
 				self.hidden_layers.append(nn.Linear(layers[i], layers[i]))
-			self.output_layers = []
+			self.output_layers = nn.ModuleList()
 			self.output_activations = []
 			for i, (outdim, activation) in enumerate(out_layers):
 				self.output_layers.append(nn.Linear(layers[-1], outdim))
 				self.output_activations.append(activation)
 		else:
-			self.output_layers = []
+			self.output_layers = nn.ModuleList()
 			self.output_activations = []
 			for i, (outdim, activation) in enumerate(out_layers):
 				self.output_layers.append(nn.Linear(in_size, outdim))
@@ -72,13 +72,11 @@ class decoder(nn.Module):
 
 		logits_1 = self.logits_1.forward(hx)
 
-		# THERE IS SOME ISSUE HERE WITH logits_1. THEY SHOULD BE ALL >0 BUT SOMEHOW SOMEVALUES ARE NEGATIVE WHICH GIVE ERRORS HERE: x1 = dist.bernoulli(logits_1). It works with relu
-
 		x1 = dist.bernoulli(logits_1)
 
 		mu, sigma = self.mu_sigma.forward(hx)
 		x2 = dist.normal(mu, sigma)
-		# print ("type3 : " , type(dist.normal(mu, sigma)))
+
 		# p(t|z)
 		logits_2 = self.logits_2(z)
 		t = dist.bernoulli(logits_2)
@@ -94,6 +92,20 @@ class decoder(nn.Module):
 		y = dist.normal(t * mu2_t1 + (1. - t) * mu2_t0, sig )
 
 		return x1, x2, t, y
+
+	def p_y_zt(self, z, t):
+
+		# p(y|t,z)
+		mu2_t0 = self.mu2_t0(z)
+		mu2_t1 = self.mu2_t1(z)
+
+		sig = Variable(torch.ones(mu2_t0.size()))
+		if mu2_t0.is_cuda:
+			sig = sig.cuda()
+
+		y = dist.normal(t * mu2_t1 + (1. - t) * mu2_t0, sig )
+
+		return y
 
 class encoder(nn.Module):
 	def __init__(self, in_size, in2_size, d, nh, h, n_pseudo_inputs, binfeats, contfeats, activation):
@@ -149,7 +161,7 @@ class encoder(nn.Module):
 		'''
 
 		pseudo_input_cont = F.relu(self.h_idle_input_cont(x_idle))
-		pseudo_input_bin = F.hardtanh(self.h_idle_input_bin(x_idle), -0.001, 0.001)
-		pseudo_input = torch.cat([pseudo_input_cont, pseudo_input_bin], 1)
+		pseudo_input_bin = F.hardtanh(self.h_idle_input_bin(x_idle), 0, 0.001)
+		pseudo_input = torch.cat([pseudo_input_cont, 1000*pseudo_input_bin], 1)
 
 		return pseudo_input
