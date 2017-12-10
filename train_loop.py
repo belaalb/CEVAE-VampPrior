@@ -34,7 +34,7 @@ class TrainLoop(object):
 		self.cuda_mode = cuda
 		self.dataset = dataset
 		self.optimizer = optimizer
-		self.history = {'train_loss': [], 'valid_loss': []}
+		self.history = {'train_loss': [], 'valid_loss': [], 'avg_loss': [], 'ite_train': [], 'ite_test': [], 'ate_train': [], 'ate_test': [], 'pehe_train': [], 'pehe_test': []}
 		self.z_dim = z_dim
 		self.n_pseudo_inputs = n_pseudo_inputs
 		self.prior = prior
@@ -45,10 +45,25 @@ class TrainLoop(object):
 
 		train_iter = tqdm(enumerate(self.dataset.get_train_valid_test()))
 
+		scores = np.zeros((n_reps, 3))
+		scores_test = np.zeros((n_reps, 3))
+
 		## Replications loop
 		for t, (train, valid, test, contfeats, binfeats) in train_iter:
 
 			best_val_loss_rep = np.inf
+
+			# Lists for logging replication results
+
+			train_loss = []
+			valid_loss = []
+			avg_loss = []
+			ite_train = []
+			ite_test = []
+			ate_train = []
+			ate_test = []
+			pehe_train = []
+			pehe_test = []
 
 			## Setup nem models/optimizers
 
@@ -60,8 +75,6 @@ class TrainLoop(object):
 				self.decoder = self.decoder.cuda()
 
 			self.svi = SVI(self.model, self.guide, self.optimizer, loss="ELBO")
-
-			train_loss = 0.0
 
 			## Prepare data
 
@@ -100,33 +113,32 @@ class TrainLoop(object):
 			## Train loop - batches
 
 			for epoch in range(n_epochs):
-				avg_loss = 0.0
+				a_loss = 0.0
 				np.random.shuffle(idx)
 
 				## Iterations loop - minibatches
 				for j in range(n_iter_per_epoch):
-					batch = Variable(torch.LongTensor(np.random.choice(idx, batch_size)) )
+					batch = Variable(torch.LongTensor(np.random.choice(idx, batch_size)))
 					if self.cuda_mode:
 						batch = batch.cuda()
-
 					minibatch_train_data = train_data.index_select(0, batch)
 
 					info_dict = self.svi.step(minibatch_train_data)
-					avg_loss += info_dict
-				avg_loss = avg_loss / (batch_size)
+
+					#self.print_params_norms()
+
+					a_loss += info_dict
+				a_loss = a_loss / (train_data.size(0))
 
 				## evaluation - each save_every epochs
 
 				if epoch%save_every == 0:
-					train_loss = self.svi.evaluate_loss(train_data/train_data.size(0))
-					val_loss = self.svi.evaluate_loss(val_data/val_data.size(0))
+					t_loss = self.svi.evaluate_loss(train_data)/train_data.size(0)
+					v_loss = self.svi.evaluate_loss(val_data)/val_data.size(0)
 
-					self.history['train_loss'].append(train_loss)
-					self.history['valid_loss'].append(val_loss)
-
-					print("average train loss in epoch {}/{}: {} ".format(epoch+1, n_epochs, avg_loss))
-					print("train loss in epoch {}/{}: {} ".format(epoch+1, n_epochs, train_loss))
-					print("validation loss in epoch {}/{}: {}".format(epoch+1, n_epochs, val_loss))
+					print("average train loss in epoch {}/{}: {} ".format(epoch+1, n_epochs, a_loss))
+					print("train loss in epoch {}/{}: {} ".format(epoch+1, n_epochs, t_loss))
+					print("validation loss in epoch {}/{}: {}".format(epoch+1, n_epochs, v_loss))
 
 					metrics_data = torch.cat([train_data[:,:-2], val_data[:,:-2] ],0)
 
@@ -142,29 +154,52 @@ class TrainLoop(object):
 
 					print('\nTrain and test metrics in epoch {}/{} ==> tr_ite: {:0.3f}, tr_ate: {:0.3f}, tr_pehe: {:0.3f}, te_ite: {:0.3f}, te_ate: {:0.3f}, te_pehe: {:0.3f}'.format(epoch+1, n_epochs, score[0], score[1], score[2], score_test[0], score_test[1], score_test[2]))
 
-					if val_loss <= best_val_loss_rep:
-						print('Improved validation bound, old: {:0.3f}, new: {:0.3f}\n '.format(best_val_loss_rep, val_loss))
-						best_val_loss_rep = val_loss
+					# Logging epoch results
+
+					train_loss.append(t_loss)
+					valid_loss.append(v_loss)
+					avg_loss.append(a_loss)
+					ite_train.append(score[0])
+					ite_test.append(score_test[0])
+					ate_train.append(score[1])
+					ate_test.append(score_test[1])
+					pehe_train.append(score[2])
+					pehe_test.append(score_test[2])
+
+					# Checking for improvement in the best performance within the replication and overall
+
+					if v_loss <= best_val_loss_rep:
+						print('Improved validation bound, old: {:0.3f}, new: {:0.3f}\n '.format(best_val_loss_rep, v_loss))
+						best_val_loss_rep = v_loss
 						self.cur_epoch = epoch
 						self.checkpointing(t+1)
-						if val_loss < best_val_loss_gen:
-							best_val_loss_gen = val_loss
+						if v_loss < best_val_loss_gen:
+							best_val_loss_gen = v_loss
 							self.checkpointing()
 		
+			#Logging replication results
+
+			self.history['train_loss'].append(train_loss)
+			self.history['valid_loss'].append(valid_loss)
+			self.history['avg_loss'].append(avg_loss)
+			self.history['ite_train'].append(ite_train)
+			self.history['ite_test'].append(ite_test)
+			self.history['ate_train'].append(ate_train)
+			self.history['ate_test'].append(ate_test)
+			self.history['pehe_train'].append(pehe_train)
+			self.history['pehe_test'].append(pehe_test)
+
 			## evaluation - each replication - Load best model within the replications
 			self.load_checkpoint(self.save_fmt.format(t+1))
 
-			scores = np.zeros((n_reps, 3))
-			scores_test = np.zeros((n_reps, 3))
-
 			y0, y1 = self.get_y0_y1(metrics_data, L=100)
-			y0, y1 = y0 * self.ys + self.ym, y1 * self.ys + self.ym
+			#y0, y1 = y0 * self.ys + self.ym, y1 * self.ys + self.ym
 
 			score = self.evaluator_train.calc_stats(y1, y0)
 			scores[t,:] = score
 
 			y0t, y1t = self.get_y0_y1(test_data, L=100)
-			y0t, y1t = y0t * self.ys + self.ym, y1t * self.ys + self.ym
+			#y0t, y1t = y0t * self.ys + self.ym, y1t * self.ys + self.ym
 
 			score_test = self.evaluator_test.calc_stats(y1t, y0t)
 			scores_test[t,:] = score_test
@@ -176,6 +211,11 @@ class TrainLoop(object):
 		scores_std_test = np.std(scores_test, axis=0)
 
 		print('\nTrain and test metrics ==> tr_ite: {:0.3f}+-{:0.3f}, tr_ate: {:0.3f}+-{:0.3f}, tr_pehe: {:0.3f}+-{:0.3f}, te_ite: {:0.3f}+-{:0.3f}, te_ate: {:0.3f}+-{:0.3f}, te_pehe: {:0.3f}+-{:0.3f}'.format(scores_mu[0], scores_std[0], scores_mu[1], scores_std[1], scores_mu[2], scores_std[2], scores_mu_test[0], scores_std_test[0], scores_mu_test[1], scores_std_test[1], scores_mu_test[2], scores_std_test[2]))
+
+		# converting log into numpy arrays
+
+		for key in self.history.keys():
+			self.history[key] = np.asarray(self.history[key])
 
 	def test(self):
 
@@ -201,17 +241,7 @@ class TrainLoop(object):
 
 		print('\nOverall best model metrics ==> te_ite: {:0.3f}, te_ate: {:0.3f}, te_pehe: {:0.3f}'.format(score_test[0], score_test[1], score_test[2]))
 
-	def get_y0_y1(self, x, shape=(), L=1, verbose=True):
-
-		t0 = torch.zeros([x.size(0), 1])
-		t1 = torch.ones([x.size(0), 1])
-
-		if self.cuda_mode:
-			t0 = t0.cuda()
-			t1 = t1.cuda()
-
-		t0 = Variable(t0.float())
-		t1 = Variable(t1.float())
+	def get_y0_y1(self, x, L=1, verbose=True):
 
 		muq_t0, sigmaq_t0, muq_t1, sigmaq_t1, qt = self.encoder.forward(x)
 
@@ -220,24 +250,24 @@ class TrainLoop(object):
 				sys.stdout.write('\rSample {}/{}'.format(l + 1, L))
 				sys.stdout.flush()
 
-			z_t0 = pyro.sample('latent_t0', dist.normal, muq_t0, sigmaq_t0)
-			z_t1 = pyro.sample('latent_t1', dist.normal, muq_t1, sigmaq_t1)
-
 			try:
-				y0 +=  self.decoder.p_y_zt(z_t0, t0) / L
-				y1 += self.decoder.p_y_zt(z_t1, t1) / L
+				y0 +=  self.decoder.p_y_zt(muq_t0, False) / L
+				y1 += self.decoder.p_y_zt(muq_t1, True) / L
 			except UnboundLocalError:
-				y0 = self.decoder.p_y_zt(z_t0, t0) / L
-				y1 = self.decoder.p_y_zt(z_t1, t1) / L
+				y0 =  self.decoder.p_y_zt(muq_t0, False) / L
+				y1 = self.decoder.p_y_zt(muq_t1, True) / L
 
 		return y0.data, y1.data
 
-	def model(self, data, seperated = False):
+	def model(self, data):
 		decoder = pyro.module('decoder', self.decoder)
 
 		# Normal prior
 		if self.prior == 0:
 			z_mu, z_sigma = ng_zeros([data.size(0), self.z_dim]), ng_ones([data.size(0), self.z_dim])
+
+			if self.cuda_mode:
+				z_mu, z_sigma = z_mu.cuda(), z_sigma.cuda()
 
 			z = pyro.sample("latent", dist.normal, z_mu, z_sigma)
 
@@ -255,12 +285,7 @@ class TrainLoop(object):
 
 			z = pyro.sample("latent", dist.normal, z_mu_avg, z_sigma_avg)
 
-		x1, x2, t, y = decoder.forward(z)
-
-		# pyro.sample('obs', torch.cat([x1, x2, t, y], 1))
-		if seperated :
-			return x1, x2, t, y , z
-		return torch.cat([x1, x2, t, y], 1)
+		x1, x2, t, y = decoder.forward(z, data[:, :len(self.dataset.binfeats)], data[:, len(self.dataset.binfeats):(len(self.dataset.binfeats) + len(self.dataset.contfeats))], data[:, -2], data[:, -1])
 
 	def vampprior(self):
 		# Minibatch of size n_pseudo_inputs of "one hot-encoded" embeddings for each pseudo-input
@@ -279,7 +304,6 @@ class TrainLoop(object):
 		 
 		return z_mu, z_sigma
 
-
 	def guide(self, data):
 		encoder = pyro.module('encoder', self.encoder)
 
@@ -292,10 +316,7 @@ class TrainLoop(object):
 		# Checkpointing
 		print('Saving model...')
 		ckpt = {'encoder_state': self.encoder.state_dict(),
-		'decoder_state': self.decoder.state_dict(),
-		'optimizer_state': self.svi.optim.get_state(),
-		'history': self.history,
-		'cur_epoch': self.cur_epoch}
+		'decoder_state': self.decoder.state_dict()}
 
 		if rep:
 			torch.save(ckpt, self.save_fmt.format(rep))
@@ -310,11 +331,34 @@ class TrainLoop(object):
 			# Load model state
 			self.encoder.load_state_dict(ckpt['encoder_state'])
 			self.decoder.load_state_dict(ckpt['decoder_state'])
-			# Load optimizer state
-			self.svi.optim.set_state(ckpt['optimizer_state'])
-			# Load history
-			self.history = ckpt['history']
-			self.cur_epoch = ckpt['cur_epoch']
 
 		else:
 			print('No checkpoint found at: {}'.format(ckpt))
+
+	def print_grad_norms(self):
+		norm = 0.0
+		for i, params in enumerate(list(self.encoder.parameters())):
+			try:
+				norm+=params.grad.norm(2).data[0]
+			except AttributeError:
+				print('Params {} with no gradients'.format(i))
+		print('Sum of grads norms (encoder): {}'.format(norm))
+
+		norm = 0.0
+		for i, params in enumerate(list(self.decoder.parameters())):
+			try:
+				norm+=params.grad.norm(2).data[0]
+			except AttributeError:
+				print('Params {} with no gradients'.format(i))
+		print('Sum of grads norms (decoder): {}'.format(norm))
+
+	def print_params_norms(self):
+		norm = 0.0
+		for i, params in enumerate(list(self.encoder.parameters())):
+			norm+=params.norm(2).data[0]
+		print('Sum of params norms (encoder): {}'.format(norm))
+
+		norm = 0.0
+		for i, params in enumerate(list(self.decoder.parameters())):
+			norm+=params.norm(2).data[0]
+		print('Sum of params norms (decoder): {}'.format(norm))

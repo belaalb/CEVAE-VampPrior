@@ -43,7 +43,7 @@ class fc_net(nn.Module):
 				if output_activation:
 					outputs.append( output_activation( output_layer(x) ) )
 				else:
-					outputs.append( self.activation( output_layer(x) ) )
+					outputs.append( F.hardtanh(output_layer(x), 0.0, 1.0) )
 			return outputs if len(outputs) > 1 else outputs[0]
 		else:
 			return x
@@ -65,21 +65,25 @@ class decoder(nn.Module):
 		self.mu2_t0 = fc_net(n_z, nh * [h], [[1, None]], activation=activation)
 		self.mu2_t1 = fc_net(n_z, nh * [h], [[1, None]], activation=activation)
 
-	def forward(self, z):
+	def forward(self, z, x_bin, x_cont, t_, y_):
 		# p(x|z)
 
 		hx = self.hx.forward(z)
 
 		logits_1 = self.logits_1.forward(hx)
 
-		x1 = dist.bernoulli(logits_1)
+		#x1 = dist.bernoulli(logits_1)
+
+		x1 = pyro.sample('x1', dist.bernoulli, logits_1, obs=x_bin)
 
 		mu, sigma = self.mu_sigma.forward(hx)
-		x2 = dist.normal(mu, sigma)
+		#x2 = dist.normal(mu, sigma)
+		x2 = pyro.sample('x2', dist.normal, mu, sigma, obs=x_cont)
 
 		# p(t|z)
 		logits_2 = self.logits_2(z)
-		t = dist.bernoulli(logits_2)
+		#t = dist.bernoulli(logits_2)
+		t = pyro.sample('t', dist.bernoulli,logits_2, obs=t_.contiguous().view(-1, 1))
 
 		# p(y|t,z)
 		mu2_t0 = self.mu2_t0(z)
@@ -89,7 +93,9 @@ class decoder(nn.Module):
 		if mu2_t0.is_cuda:
 			sig = sig.cuda()
 
-		y = dist.normal(t * mu2_t1 + (1. - t) * mu2_t0, sig )
+		#y = dist.normal(t * mu2_t1 + (1. - t) * mu2_t0, sig )
+
+		y = pyro.sample('y', dist.normal, t * mu2_t1 + (1. - t) * mu2_t0, sig, obs=y_.contiguous().view(-1, 1))
 
 		return x1, x2, t, y
 
@@ -103,8 +109,10 @@ class decoder(nn.Module):
 		if mu2_t0.is_cuda:
 			sig = sig.cuda()
 
-		y = dist.normal(t * mu2_t1 + (1. - t) * mu2_t0, sig )
-
+		if t:
+			y = dist.normal(mu2_t1, sig)
+		else:
+			y = dist.normal(mu2_t0, sig)
 		return y
 
 class encoder(nn.Module):
@@ -128,9 +136,8 @@ class encoder(nn.Module):
 		self.h_idle_input_cont = nn.Linear(n_pseudo_inputs, contfeats)
 		self.h_idle_input_bin = nn.Linear(n_pseudo_inputs, binfeats)
 
-	def forward(self, x):
 
-		# print(x.size())
+	def forward(self, x):
 
 		# q(t|x)
 		logits_t = self.logits_t.forward(x)
