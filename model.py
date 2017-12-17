@@ -43,7 +43,9 @@ class fc_net(nn.Module):
 				if output_activation:
 					outputs.append( output_activation( output_layer(x) ) )
 				else:
-					outputs.append( F.hardtanh(output_layer(x), 0.0, 1.0) )
+					#outputs.append( F.hardtanh(output_layer(x), 0.0, 1.0) )
+					#outputs.append( F.sigmoid(output_layer(x)) )
+					outputs.append( output_layer(x) )
 			return outputs if len(outputs) > 1 else outputs[0]
 		else:
 			return x
@@ -54,12 +56,12 @@ class decoder(nn.Module):
 
 		# p(x|z)
 		self.hx = fc_net(n_z, (nh - 1) * [h], [], activation=activation)
-		self.logits_1 = fc_net(h, [h], [[binfeats, None]], activation=activation)
+		self.logits_1 = fc_net(h, [h], [[binfeats, F.sigmoid]], activation=activation)
 
 		self.mu_sigma = fc_net(h, [h], [[contfeats, None], [contfeats, F.softplus]], activation=activation)
 
 		# p(t|z)
-		self.logits_2 = fc_net(n_z, [h], [[1, None]], activation=activation)
+		self.logits_2 = fc_net(n_z, [h], [[1, F.sigmoid]], activation=activation)
 
 		# p(y|t,z)
 		self.mu2_t0 = fc_net(n_z, nh * [h], [[1, None]], activation=activation)
@@ -72,17 +74,13 @@ class decoder(nn.Module):
 
 		logits_1 = self.logits_1.forward(hx)
 
-		#x1 = dist.bernoulli(logits_1)
-
 		x1 = pyro.sample('x1', dist.bernoulli, logits_1, obs=x_bin)
 
 		mu, sigma = self.mu_sigma.forward(hx)
-		#x2 = dist.normal(mu, sigma)
 		x2 = pyro.sample('x2', dist.normal, mu, sigma, obs=x_cont)
 
 		# p(t|z)
 		logits_2 = self.logits_2(z)
-		#t = dist.bernoulli(logits_2)
 		t = pyro.sample('t', dist.bernoulli,logits_2, obs=t_.contiguous().view(-1, 1))
 
 		# p(y|t,z)
@@ -92,8 +90,6 @@ class decoder(nn.Module):
 		sig = Variable(torch.ones(mu2_t0.size()))
 		if mu2_t0.is_cuda:
 			sig = sig.cuda()
-
-		#y = dist.normal(t * mu2_t1 + (1. - t) * mu2_t0, sig )
 
 		y = pyro.sample('y', dist.normal, t * mu2_t1 + (1. - t) * mu2_t0, sig, obs=y_.contiguous().view(-1, 1))
 
@@ -120,7 +116,7 @@ class encoder(nn.Module):
 		super(encoder, self).__init__()
 
 		# q(t|x)
-		self.logits_t = fc_net(in_size, [d], [[1, None]], activation=activation)
+		self.logits_t = fc_net(in_size, [d], [[1, F.sigmoid]], activation=activation)
 
 		# q(y|x,t)
 		self.hqy = fc_net(in_size, (nh - 1) * [h], [], activation=activation)
@@ -133,9 +129,8 @@ class encoder(nn.Module):
 		self.muq_t1_sigmaq_t1 = fc_net(h, [h], [[d, None], [d, F.softplus]], activation=activation)
 
 		# pseudo-inputs generation
-		self.h_idle_input_cont = nn.Linear(n_pseudo_inputs, contfeats)
-		self.h_idle_input_bin = nn.Linear(n_pseudo_inputs, binfeats)
-
+		self.h_idle_input_cont = nn.Linear(n_pseudo_inputs, contfeats, bias=None)
+		self.h_idle_input_bin = nn.Linear(n_pseudo_inputs, binfeats, bias=None)
 
 	def forward(self, x):
 
@@ -167,8 +162,8 @@ class encoder(nn.Module):
 		Specific forward pass to generate pseudo inputs given idle_input
 		'''
 
-		pseudo_input_cont = F.relu(self.h_idle_input_cont(x_idle))
-		pseudo_input_bin = F.hardtanh(self.h_idle_input_bin(x_idle), 0, 0.001)
-		pseudo_input = torch.cat([pseudo_input_cont, 1000*pseudo_input_bin], 1)
+		pseudo_input_cont = F.sigmoid(self.h_idle_input_cont(x_idle))
+		pseudo_input_bin = F.hardtanh(self.h_idle_input_bin(x_idle), 0, 1)
+		pseudo_input = torch.cat([pseudo_input_cont, pseudo_input_bin], 1)
 
 		return pseudo_input

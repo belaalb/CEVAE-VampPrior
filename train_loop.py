@@ -1,5 +1,8 @@
 import torch
 from torch.autograd import Variable
+import torch.nn.init as init
+
+from scipy.stats import sem
 
 import pyro
 from pyro.infer import SVI
@@ -13,9 +16,10 @@ import os
 import sys
 from evaluation import Evaluator
 import model as model_
+from pyro.optim import Adam, Adamax
 
 class TrainLoop(object):
-	def __init__(self, in_size, d, nh, h, n_pseudo_inputs, prior, activation, optimizer, dataset, z_dim, checkpoint_path=None, cuda=True):
+	def __init__(self, in_size, d, nh, h, n_pseudo_inputs, prior, activation, optimizer, optim_params, dataset, z_dim, checkpoint_path=None, cuda=True):
 
 		if checkpoint_path is None:
 			# Save to current directory
@@ -34,6 +38,7 @@ class TrainLoop(object):
 		self.cuda_mode = cuda
 		self.dataset = dataset
 		self.optimizer = optimizer
+		self.optimim_params = optim_params
 		self.history = {'train_loss': [], 'valid_loss': [], 'avg_loss': [], 'ite_train': [], 'ite_test': [], 'ate_train': [], 'ate_test': [], 'pehe_train': [], 'pehe_test': []}
 		self.z_dim = z_dim
 		self.n_pseudo_inputs = n_pseudo_inputs
@@ -65,16 +70,27 @@ class TrainLoop(object):
 			pehe_train = []
 			pehe_test = []
 
-			## Setup nem models/optimizers
+			## Setup new models/optimizers
+
+			pyro.clear_param_store()
 
 			self.encoder = model_.encoder(self.in_size, self.in_size + 1, self.d, self.nh, self.h, self.n_pseudo_inputs, len(self.dataset.binfeats), len(self.dataset.contfeats), self.activation)
 			self.decoder = model_.decoder(self.d, self.nh, self.h, len(self.dataset.binfeats), len(self.dataset.contfeats), self.activation)
+
+			self.initialize_params()
 
 			if self.cuda_mode:
 				self.encoder = self.encoder.cuda()
 				self.decoder = self.decoder.cuda()
 
-			self.svi = SVI(self.model, self.guide, self.optimizer, loss="ELBO")
+			if self.optimizer == 'adam':
+				optim = Adam(self.optimim_params)
+			elif self.optimizer == 'adamax':
+				optim = Adamax(self.optimim_params)
+			else:
+				print('Select correct optimizer')
+
+			self.svi = SVI(self.model, self.guide, optim, loss="ELBO")
 
 			## Prepare data
 
@@ -125,10 +141,10 @@ class TrainLoop(object):
 
 					info_dict = self.svi.step(minibatch_train_data)
 
-					#self.print_params_norms()
+					a_loss += info_dict / minibatch_train_data.size(0)
+				a_loss = a_loss
 
-					a_loss += info_dict
-				a_loss = a_loss / (train_data.size(0))
+				#self.print_params_norms()
 
 				## evaluation - each save_every epochs
 
@@ -193,22 +209,22 @@ class TrainLoop(object):
 			self.load_checkpoint(self.save_fmt.format(t+1))
 
 			y0, y1 = self.get_y0_y1(metrics_data, L=100)
-			#y0, y1 = y0 * self.ys + self.ym, y1 * self.ys + self.ym
+			y0, y1 = y0 * self.ys + self.ym, y1 * self.ys + self.ym
 
 			score = self.evaluator_train.calc_stats(y1, y0)
 			scores[t,:] = score
 
 			y0t, y1t = self.get_y0_y1(test_data, L=100)
-			#y0t, y1t = y0t * self.ys + self.ym, y1t * self.ys + self.ym
+			y0t, y1t = y0t * self.ys + self.ym, y1t * self.ys + self.ym
 
 			score_test = self.evaluator_test.calc_stats(y1t, y0t)
 			scores_test[t,:] = score_test
 
 		scores_mu = np.mean(scores, axis=0)
-		scores_std = np.std(scores, axis=0)
+		scores_std = sem(scores, axis=0)
 
 		scores_mu_test = np.mean(scores_test, axis=0)
-		scores_std_test = np.std(scores_test, axis=0)
+		scores_std_test = sem(scores_test, axis=0)
 
 		print('\nTrain and test metrics ==> tr_ite: {:0.3f}+-{:0.3f}, tr_ate: {:0.3f}+-{:0.3f}, tr_pehe: {:0.3f}+-{:0.3f}, te_ite: {:0.3f}+-{:0.3f}, te_ate: {:0.3f}+-{:0.3f}, te_pehe: {:0.3f}+-{:0.3f}'.format(scores_mu[0], scores_std[0], scores_mu[1], scores_std[1], scores_mu[2], scores_std[2], scores_mu_test[0], scores_std_test[0], scores_mu_test[1], scores_std_test[1], scores_mu_test[2], scores_std_test[2]))
 
@@ -256,6 +272,9 @@ class TrainLoop(object):
 			except UnboundLocalError:
 				y0 =  self.decoder.p_y_zt(muq_t0, False) / L
 				y1 = self.decoder.p_y_zt(muq_t1, True) / L
+
+		if L > 1 and verbose:
+			print()
 
 		return y0.data, y1.data
 
@@ -334,6 +353,22 @@ class TrainLoop(object):
 
 		else:
 			print('No checkpoint found at: {}'.format(ckpt))
+
+	def initialize_params(self):
+
+		for layer in self.encoder.modules():
+			for k, v in layer.named_parameters():
+				if 'weight' in k:
+					init.xavier_normal(v)
+				else:
+					v.data.zero_()
+
+		for layer in self.encoder.modules():
+			for k, v in layer.named_parameters():
+				if 'weight' in k:
+					init.xavier_normal(v)
+				else:
+					v.data.zero_()
 
 	def print_grad_norms(self):
 		norm = 0.0
