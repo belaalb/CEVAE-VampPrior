@@ -5,4 +5,4 @@ CEVAE with VampPrior
 - VampPrior: https://arxiv.org/pdf/1705.07120.pdf  
 
 IFT6269 project.
-Collaborators: Abhishek Tiwari, Joao Monteiro, Yassine Yaakoubi.
+Collaborators: Joao Monteiro, Yassine Yaakoubi, Abhishek Tiwari.
